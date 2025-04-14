@@ -1,0 +1,313 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: SAM template for Cognito with API Gateway and Java Lambda functions
+
+Resources:
+  # Cognito User Pool
+#  UserPool:
+#    Type: AWS::Cognito::UserPool
+#    Properties:
+#      UserPoolName: MyAppUserPool
+#      AutoVerifiedAttributes:
+#        - email
+#      Schema:
+#        - Name: email
+#          AttributeDataType: String
+#          Required: true
+#        - Name: name
+#          AttributeDataType: String
+#          Required: false
+#      Policies:
+#        PasswordPolicy:
+#          MinimumLength: 8
+#          RequireNumbers: true
+#          RequireSymbols: true
+#          RequireUppercase: true
+#          RequireLowercase: true
+
+
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      # Your existing UserPool properties
+      AutoVerifiedAttributes:
+        - email
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true  # Users can only be created by admins
+        InviteMessageTemplate:
+          EmailSubject: Welcome to Our Application
+          EmailMessage: Your username is {username} and temporary password is {####}. Please login to reset your password.
+          SMSMessage: Your username is {username} and temporary password is {####}
+      EmailConfiguration:
+        EmailSendingAccount: COGNITO_DEFAULT
+      # Add other properties as needed
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+          RequireUppercase: true
+          TemporaryPasswordValidityDays: 7  # Temporary password validity period
+
+
+  # Cognito User Pool Client
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: MyAppClient
+      UserPoolId: !Ref UserPool
+      GenerateSecret: false
+      ExplicitAuthFlows:
+        - ALLOW_USER_PASSWORD_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+
+  # API Gateway
+  ApiGateway:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: Prod
+      Cors:
+        AllowMethods: "'POST,OPTIONS'"
+        AllowHeaders: "'Content-Type,Authorization'"
+        AllowOrigin: "'*'"
+      Auth:
+        DefaultAuthorizer: CognitoAuthorizer
+        Authorizers:
+          CognitoAuthorizer:
+            UserPoolArn: !GetAtt UserPool.Arn
+
+    # Add to your SAM template
+  AdminUserGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      GroupName: Admins
+      UserPoolId: !Ref UserPool
+      Description: Group for admin users who can create other users
+
+
+    # Add this to the existing Resources section
+  ProtectedFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: HelloWorldFunction
+      Handler: auth.ProtectedHandler::handleRequest
+      Runtime: java21
+      MemorySize: 512
+      Timeout: 30
+      Events:
+        ProtectedApi:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /protected
+            Method: GET
+            Auth:
+              Authorizer: CognitoAuthorizer
+
+  ChangePasswordFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: HelloWorldFunction
+      Handler: auth.ChangePasswordHandler::handleRequest
+      Runtime: java21
+      MemorySize: 512
+      Timeout: 30
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - cognito-idp:ChangePassword
+              Resource: "*"
+      Events:
+        ChangePasswordApi:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /change-password
+            Method: POST
+            Auth:
+              Authorizer: CognitoAuthorizer
+
+  ForgotPasswordFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: HelloWorldFunction
+      Handler: auth.ForgotPasswordHandler::handleRequest
+      Runtime: java21
+      MemorySize: 512
+      Timeout: 30
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - cognito-idp:ForgotPassword
+              Resource: "*"
+      Environment:
+        Variables:
+          USER_POOL_CLIENT_ID: !Ref UserPoolClient
+      Events:
+        ForgotPasswordApi:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /forgot-password
+            Method: POST
+            Auth:
+              Authorizer: NONE
+
+  ConfirmForgotPasswordFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: HelloWorldFunction
+      Handler: auth.ConfirmForgotPasswordHandler::handleRequest
+      Runtime: java21
+      MemorySize: 512
+      Timeout: 30
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - cognito-idp:ConfirmForgotPassword
+              Resource: "*"
+      Environment:
+        Variables:
+          USER_POOL_CLIENT_ID: !Ref UserPoolClient
+      Events:
+        ConfirmForgotPasswordApi:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /confirm-forgot-password
+            Method: POST
+            Auth:
+              Authorizer: NONE
+
+
+  SignUpFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: HelloWorldFunction
+      Handler: auth.SignUpHandler::handleRequest
+      Runtime: java21
+      MemorySize: 512
+      Timeout: 30
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - cognito-idp:SignUp
+                - cognito-idp:AdminConfirmSignUp
+              Resource: !GetAtt UserPool.Arn
+      Environment:
+        Variables:
+          USER_POOL_CLIENT_ID: !Ref UserPoolClient
+          USER_POOL_ID: !Ref UserPool
+      Events:
+        SignUpApi:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /signup
+            Method: POST
+            Auth:
+              Authorizer: NONE
+
+
+  SignOutFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: HelloWorldFunction
+      Handler: auth.SignOutHandler::handleRequest
+      Runtime: java21
+      MemorySize: 512
+      Timeout: 30
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - cognito-idp:GlobalSignOut
+              Resource: !GetAtt UserPool.Arn
+      Events:
+        SignOutApi:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /signout
+            Method: POST
+            Auth:
+              Authorizer: CognitoAuthorizer
+
+  RefreshTokenFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: HelloWorldFunction
+      Handler: auth.RefreshTokenHandler::handleRequest
+      Runtime: java21
+      MemorySize: 512
+      Timeout: 30
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - cognito-idp:InitiateAuth
+              Resource: !GetAtt UserPool.Arn
+      Environment:
+        Variables:
+          USER_POOL_CLIENT_ID: !Ref UserPoolClient
+      Events:
+        RefreshTokenApi:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /refresh-token
+            Method: POST
+            Auth:
+              Authorizer: NONE
+
+
+
+  SignInFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: HelloWorldFunction
+      Handler: auth.SignInHandler::handleRequest
+      Runtime: java21
+      MemorySize: 512
+      Timeout: 30
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - cognito-idp:InitiateAuth
+              Resource: !GetAtt UserPool.Arn
+      Environment:
+        Variables:
+          USER_POOL_CLIENT_ID: !Ref UserPoolClient
+      Events:
+        SignInApi:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /signin
+            Method: POST
+            Auth:
+              Authorizer: NONE
+
+Outputs:
+  UserPoolId:
+    Description: ID of the Cognito User Pool
+    Value: !Ref UserPool
+  UserPoolClientId:
+    Description: ID of the Cognito User Pool Client
+    Value: !Ref UserPoolClient
+  ApiUrl:
+    Description: API Gateway endpoint URL
+    Value: !Sub "https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/Prod/"
